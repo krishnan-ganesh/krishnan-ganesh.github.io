@@ -1,0 +1,1583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>56 Kerala Card Game (P2P)</title>
+    <!-- PeerJS for WebRTC P2P communication -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.5/peerjs.min.js"></script>
+
+    <!-- Modular Game Engines -->
+    <script src="gameEngine.js"></script>
+    <script src="biddingEngine.js"></script>
+    <script src="gameState.js"></script>
+    <script src="botEngine.js"></script>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- 1. Header Bar -->
+    <header>
+        <div class="brand-title">
+            <span>♠♥</span>
+            <span>Kerala 56</span>
+            <span style="font-size: 12px; font-weight: normal; color: #888;">(P2P Decentralized)</span>
+        </div>
+
+        <div class="header-meta">
+            <div id="room-code-tag" class="room-badge" style="display: none;">
+                <span>Room:</span>
+                <strong id="display-room-id" style="color: var(--gold); font-family: monospace;">---</strong>
+                <button class="btn-secondary btn-sm" onclick="copyInviteLink()" title="Copy Invite Link">🔗 Invite</button>
+            </div>
+
+            <div class="score-board">
+                <div class="score-team t1">Team Red: <span id="score-t1">12</span> Tables</div>
+                <div class="score-team t2">Team Blue: <span id="score-t2">12</span> Tables</div>
+            </div>
+
+            <div id="my-seat-badge" class="seat-team-badge t1" style="display: none;">Seat 1</div>
+        </div>
+    </header>
+
+    <!-- 2. Reconnect Warning Banner -->
+    <div id="reconnect-banner">
+        <span id="reconnect-banner-text">⚠️ Connection to Host lost. Auto-reconnecting...</span>
+        <button class="btn-secondary btn-sm" onclick="manualReconnect()">Retry Now</button>
+    </div>
+
+    <!-- 3. Host Control Bar (Only shown to Host) -->
+    <div id="host-toolbar" class="host-bar" style="display: none;">
+        <div>
+            <strong style="color: var(--gold);">Host Controls:</strong>
+            <span id="host-player-count">Players: 1/6</span>
+        </div>
+        <div style="display: flex; gap: 8px;">
+            <button id="btn-fill-bots" class="btn-secondary btn-sm" onclick="hostFillBots()">🤖 Fill Empty Seats with Bots</button>
+            <button id="btn-start-deal" class="btn-green btn-sm" onclick="hostStartRound()">🎴 Deal &amp; Start Game</button>
+            <button id="btn-sub-bot" class="btn-blue btn-sm" style="display: none;" onclick="hostSubDisconnectedWithBot()">Substitute Bot for Disconnected</button>
+        </div>
+    </div>
+
+    <!-- 4. Setup / Lobby View -->
+    <div id="lobby-view">
+        <h2 style="color: var(--gold); text-align: center; margin-bottom: 8px;">Welcome to Kerala 56</h2>
+        <p style="text-align: center; color: #9aa5b1; font-size: 14px; margin-bottom: 25px;">
+            Decentralized peer-to-peer 6-player card game with automatic drop &amp; rejoin resilience.
+        </p>
+
+        <div style="max-width: 400px; margin: 0 auto 20px auto;">
+            <label style="font-size: 13px; font-weight: bold; color: #ccc;">Your Display Name:</label>
+            <input type="text" id="player-name-input" placeholder="Enter your name" maxlength="15" value="Player">
+        </div>
+
+        <div class="lobby-grid">
+            <!-- Host A Game -->
+            <div class="lobby-card">
+                <h3>Host a New Table</h3>
+                <p style="font-size: 13px; color: #a0aec0;">
+                    Create a decentralized room as the Host. You will coordinate table and game state. Friends can join using your Room ID or Invite Link.
+                </p>
+                <button class="btn-gold" onclick="startHost()">
+                    <span>👑</span> Create &amp; Host Room
+                </button>
+            </div>
+
+            <!-- Join A Game -->
+            <div class="lobby-card">
+                <h3>Join an Existing Table</h3>
+                <p style="font-size: 13px; color: #a0aec0;">
+                    Paste the Host's Room Peer ID or open the invite link shared by your friend.
+                </p>
+                <input type="text" id="join-room-id" placeholder="Paste Host Room ID">
+                <button class="btn-green" onclick="startJoin()">
+                    <span>🚪</span> Join Game
+                </button>
+            </div>
+        </div>
+
+        <div id="previous-session-box" style="display: none; margin-top: 25px; padding: 15px; background: rgba(255, 183, 3, 0.1); border: 1px solid #ffb703; border-radius: 8px; text-align: center;">
+            <p id="previous-session-text" style="font-size: 14px; margin-bottom: 10px; color: #ffd166;">
+                You were recently in a game.
+            </p>
+            <button class="btn-gold btn-sm" onclick="resumePreviousSession()">Resume Saved Session</button>
+            <button class="btn-secondary btn-sm" onclick="clearPreviousSession()">Dismiss</button>
+        </div>
+    </div>
+
+    <!-- 5. Main Game View -->
+    <div id="game-view">
+        <div class="table-area">
+            <div class="poker-table">
+                <!-- 6 Seats (Perspective relative to local player) -->
+                <div id="seat-ui-0" class="seat seat-pos-0 team-0">
+                    <div class="seat-team-badge t1">Seat 1 • Team Red</div>
+                    <div id="seat-name-0" class="seat-name">Player 1</div>
+                    <div class="seat-status">
+                        <span id="seat-dot-0" class="status-dot online"></span>
+                        <span id="seat-status-text-0">Online</span>
+                    </div>
+                    <div id="seat-bid-0" class="seat-bid-pill" style="display: none;">Bid: -</div>
+                </div>
+
+                <div id="seat-ui-1" class="seat seat-pos-1 team-1">
+                    <div class="seat-team-badge t2">Seat 2 • Team Blue</div>
+                    <div id="seat-name-1" class="seat-name">Player 2</div>
+                    <div class="seat-status">
+                        <span id="seat-dot-1" class="status-dot offline"></span>
+                        <span id="seat-status-text-1">Empty</span>
+                    </div>
+                    <div id="seat-bid-1" class="seat-bid-pill" style="display: none;">Bid: -</div>
+                </div>
+
+                <div id="seat-ui-2" class="seat seat-pos-2 team-0">
+                    <div class="seat-team-badge t1">Seat 3 • Team Red</div>
+                    <div id="seat-name-2" class="seat-name">Player 3</div>
+                    <div class="seat-status">
+                        <span id="seat-dot-2" class="status-dot offline"></span>
+                        <span id="seat-status-text-2">Empty</span>
+                    </div>
+                    <div id="seat-bid-2" class="seat-bid-pill" style="display: none;">Bid: -</div>
+                </div>
+
+                <div id="seat-ui-3" class="seat seat-pos-3 team-1">
+                    <div class="seat-team-badge t2">Seat 4 • Team Blue</div>
+                    <div id="seat-name-3" class="seat-name">Player 4</div>
+                    <div class="seat-status">
+                        <span id="seat-dot-3" class="status-dot offline"></span>
+                        <span id="seat-status-text-3">Empty</span>
+                    </div>
+                    <div id="seat-bid-3" class="seat-bid-pill" style="display: none;">Bid: -</div>
+                </div>
+
+                <div id="seat-ui-4" class="seat seat-pos-4 team-0">
+                    <div class="seat-team-badge t1">Seat 5 • Team Red</div>
+                    <div id="seat-name-4" class="seat-name">Player 5</div>
+                    <div class="seat-status">
+                        <span id="seat-dot-4" class="status-dot offline"></span>
+                        <span id="seat-status-text-4">Empty</span>
+                    </div>
+                    <div id="seat-bid-4" class="seat-bid-pill" style="display: none;">Bid: -</div>
+                </div>
+
+                <div id="seat-ui-5" class="seat seat-pos-5 team-1">
+                    <div class="seat-team-badge t2">Seat 6 • Team Blue</div>
+                    <div id="seat-name-5" class="seat-name">Player 6</div>
+                    <div class="seat-status">
+                        <span id="seat-dot-5" class="status-dot offline"></span>
+                        <span id="seat-status-text-5">Empty</span>
+                    </div>
+                    <div id="seat-bid-5" class="seat-bid-pill" style="display: none;">Bid: -</div>
+                </div>
+
+                <!-- Center Table Felt (Trick, Trump, Announcer) -->
+                <div class="center-felt">
+                    <div id="game-announcer" class="game-announcer">Waiting for players to join...</div>
+
+                    <div id="trump-display-box" class="trump-indicator-box">
+                        <span>Trump:</span>
+                        <strong id="trump-text" style="color: var(--gold);">Not Set</strong>
+                        <span id="trump-icon" class="trump-icon"></span>
+                    </div>
+
+                    <div id="trick-area" class="trick-circle"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Action Panel (My Hand, Bidding Bar, Trump Reveal) -->
+        <div class="bottom-action-panel">
+            <div id="action-toolbar" class="action-toolbar">
+                <!-- Bidding Interface (International 56) -->
+                <div id="bidding-controls" class="bidding-bar" style="display: none; flex-wrap: wrap; gap: 8px; align-items: center;">
+                    <span style="font-weight: bold; color: var(--gold); font-size: 13px;">BID:</span>
+                    <div class="bid-stepper">
+                        <button class="btn-secondary btn-sm" onclick="adjustBidInput(-1)">-</button>
+                        <input type="number" id="bid-input" min="28" max="56" value="28" style="width: 50px; text-align: center; font-weight: bold;">
+                        <button class="btn-secondary btn-sm" onclick="adjustBidInput(1)">+</button>
+                    </div>
+
+                    <!-- Denomination selector: Spades, Hearts, Clubs, Dice, No Trump -->
+                    <div class="bid-suit-selector" style="display: flex; gap: 4px;">
+                        <button type="button" class="suit-pick-btn active" data-suit="♠" onclick="selectBidSuit('♠')" title="Spades">♠</button>
+                        <button type="button" class="suit-pick-btn" data-suit="♥" style="color: #ff6b6b;" onclick="selectBidSuit('♥')" title="Hearts">♥</button>
+                        <button type="button" class="suit-pick-btn" data-suit="♣" onclick="selectBidSuit('♣')" title="Clubs">♣</button>
+                        <button type="button" class="suit-pick-btn" data-suit="♦" style="color: #ff6b6b;" onclick="selectBidSuit('♦')" title="Dice (Diamonds)">♦ Dice</button>
+                        <button type="button" class="suit-pick-btn" data-suit="NT" style="color: var(--gold); font-weight: bold;" onclick="selectBidSuit('NT')" title="No Trump">NT</button>
+                    </div>
+
+                    <button class="btn-gold btn-sm" onclick="submitBid()">Bid</button>
+
+                    <!-- International 56 Conventional Bids (+28, +1, +2) -->
+                    <div id="convention-bids-group" style="display: flex; gap: 5px; align-items: center;">
+                        <button id="btn-plus-28" type="button" class="btn-convention btn-sm" onclick="submitPlus28()" title="+28 Convention: Holding Jack and 2 other cards in this suit">+28 <span class="conv-suit-lbl">♠</span> (J+2)</button>
+                        <button id="btn-plus-1" type="button" class="btn-convention btn-sm" onclick="submitPlusOne()" title="+1 Convention: Holding a Single Jack in this suit">+1 <span class="conv-suit-lbl">♠</span> (Single J)</button>
+                        <button id="btn-plus-2" type="button" class="btn-convention btn-sm" onclick="submitPlusTwo()" title="+2 Convention: Holding two top cards / strong support">+2 <span class="conv-suit-lbl">♠</span></button>
+                    </div>
+
+                    <button id="btn-double" class="btn-secondary btn-sm" style="display: none; background: #e63946; color: white;" onclick="submitDouble()">Double</button>
+                    <button id="btn-redouble" class="btn-secondary btn-sm" style="display: none; background: #d90429; color: white; font-weight: bold;" onclick="submitRedouble()">Redouble</button>
+                    <button id="btn-pass" class="btn-secondary btn-sm" onclick="submitPass()">Pass</button>
+                </div>
+
+                <!-- Turn Alert Indicator -->
+                <div id="my-turn-indicator" style="display: none; color: #4caf50; font-weight: bold; font-size: 14px;">
+                    ✨ It's your turn to play a card!
+                </div>
+            </div>
+
+            <!-- Player's Hand Cards -->
+            <div id="my-hand" class="my-hand-container"></div>
+        </div>
+    </div>
+
+    <!-- 7. Round Over Modal -->
+    <div id="round-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-card">
+            <h2 id="round-winner-title" style="color: var(--gold); margin-bottom: 12px;">Round Finished!</h2>
+            <p id="round-summary-text" style="font-size: 15px; color: #cbd5e1; margin-bottom: 20px; line-height: 1.6;"></p>
+            <button id="btn-next-round" class="btn-green" style="display: none;" onclick="hostStartRound()">Start Next Round</button>
+        </div>
+    </div>
+
+    <!-- 8. Collapsible System Log -->
+    <div class="system-log-drawer">
+        <div class="log-header">
+            <span>ACTIVITY &amp; NETWORK LOG</span>
+            <button class="btn-secondary btn-sm" onclick="clearLog()" style="padding: 2px 8px; font-size: 11px;">Clear</button>
+        </div>
+        <div id="log-body" class="log-body"></div>
+    </div>
+
+    <script>
+        /**
+         * 56 KERALA CARD GAME - CONTROLLER & NETWORKING LAYER
+         * Uses GameEngine, BiddingEngine, and GameState modules.
+         */
+
+        // Audio System (Synthesized Web Audio API)
+        const AudioFX = {
+            ctx: null,
+            init() {
+                if (!this.ctx) {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    if (AudioContext) this.ctx = new AudioContext();
+                }
+            },
+            play(type) {
+                try {
+                    this.init();
+                    if (!this.ctx) return;
+                    if (this.ctx.state === 'suspended') this.ctx.resume();
+
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+
+                    const now = this.ctx.currentTime;
+                    if (type === 'card') {
+                        osc.frequency.setValueAtTime(400, now);
+                        osc.frequency.exponentialRampToValueAtTime(150, now + 0.08);
+                        gain.gain.setValueAtTime(0.2, now);
+                        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+                        osc.start(now);
+                        osc.stop(now + 0.08);
+                    } else if (type === 'turn') {
+                        osc.type = 'sine';
+                        osc.frequency.setValueAtTime(587.33, now);
+                        osc.frequency.setValueAtTime(880, now + 0.1);
+                        gain.gain.setValueAtTime(0.25, now);
+                        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                        osc.start(now);
+                        osc.stop(now + 0.3);
+                    } else if (type === 'win') {
+                        osc.type = 'triangle';
+                        osc.frequency.setValueAtTime(523.25, now);
+                        osc.frequency.setValueAtTime(659.25, now + 0.1);
+                        osc.frequency.setValueAtTime(783.99, now + 0.2);
+                        gain.gain.setValueAtTime(0.3, now);
+                        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.45);
+                        osc.start(now);
+                        osc.stop(now + 0.45);
+                    }
+                } catch (e) {}
+            }
+        };
+
+        // Networking & Session State
+        let peer = null;
+        let isHost = false;
+        let myPeerId = null;
+        let hostRoomId = null;
+        let hostConnection = null;
+        let connectionsByPeerId = {};
+        let connectionsBySeat = {};
+        let reconnectInterval = null;
+        let pingInterval = null;
+        let disconnectGraceTimers = {};
+
+        // Player Persistent Identity (Scoped per browser tab/session to avoid ID collision when running multiple windows)
+        let myPlayerId = sessionStorage.getItem('k56_player_id');
+        if (!myPlayerId) {
+            myPlayerId = 'p_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+            sessionStorage.setItem('k56_player_id', myPlayerId);
+        }
+
+        let myPlayerName = sessionStorage.getItem('k56_player_name') || localStorage.getItem('k56_player_name') || 'Player';
+        document.getElementById('player-name-input').value = myPlayerName;
+        document.getElementById('player-name-input').addEventListener('input', (e) => {
+            myPlayerName = e.target.value.trim() || 'Player';
+            sessionStorage.setItem('k56_player_name', myPlayerName);
+            localStorage.setItem('k56_player_name', myPlayerName);
+        });
+
+        // Client State View
+        let mySeatIndex = null;
+        let myHand = [];
+        let clientGameState = null;
+
+        // Authoritative Host State (initialized via GameState module)
+        let hostState = GameState.createInitialState(myPlayerId, myPlayerName);
+        let hostBiddingState = null;
+
+        // System Logging Helper
+        function log(msg, type = 'info') {
+            const body = document.getElementById('log-body');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            body.appendChild(entry);
+            body.scrollTop = body.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log-body').innerHTML = '';
+        }
+
+        // ==========================================
+        // INITIALIZATION & URL INVITES
+        // ==========================================
+        window.addEventListener('DOMContentLoaded', () => {
+            const hash = window.location.hash;
+            if (hash.startsWith('#room=')) {
+                const urlRoomId = hash.replace('#room=', '').trim();
+                if (urlRoomId) {
+                    document.getElementById('join-room-id').value = urlRoomId;
+                }
+            }
+
+            const lastRoom = sessionStorage.getItem('k56_last_room') || localStorage.getItem('k56_last_room');
+            const lastRole = sessionStorage.getItem('k56_last_role') || localStorage.getItem('k56_last_role');
+            if (lastRoom) {
+                document.getElementById('previous-session-box').style.display = 'block';
+                document.getElementById('previous-session-text').innerText = 
+                    `Found previous session: Room ${lastRoom} (${lastRole === 'host' ? 'Host' : 'Player'})`;
+            }
+        });
+
+        function resumePreviousSession() {
+            const lastRoom = sessionStorage.getItem('k56_last_room') || localStorage.getItem('k56_last_room');
+            const lastRole = sessionStorage.getItem('k56_last_role') || localStorage.getItem('k56_last_role');
+            if (!lastRoom) return;
+
+            if (lastRole === 'host') {
+                log("Resuming Host session...", "info");
+                startHost(lastRoom);
+            } else {
+                log(`Rejoining room ${lastRoom}...`, "info");
+                document.getElementById('join-room-id').value = lastRoom;
+                startJoin();
+            }
+        }
+
+        function clearPreviousSession() {
+            sessionStorage.removeItem('k56_last_room');
+            sessionStorage.removeItem('k56_last_role');
+            localStorage.removeItem('k56_last_room');
+            localStorage.removeItem('k56_last_role');
+            GameState.clearStorage();
+            document.getElementById('previous-session-box').style.display = 'none';
+        }
+
+        function copyInviteLink() {
+            const targetRoom = isHost ? myPeerId : hostRoomId;
+            if (!targetRoom) return;
+            const url = `${window.location.origin}${window.location.pathname}#room=${targetRoom}`;
+            navigator.clipboard.writeText(url).then(() => {
+                log("Invite link copied to clipboard!", "success");
+                alert("Invite link copied to clipboard!\nShare it with other players.");
+            }).catch(() => {
+                prompt("Copy this invite link:", url);
+            });
+        }
+
+        // ==========================================
+        // HOST IMPLEMENTATION (P2P SERVER NODE)
+        // ==========================================
+        function startHost(savedRoomId = null) {
+            isHost = true;
+            sessionStorage.setItem('k56_last_role', 'host');
+            log("Initializing Host Peer...", "info");
+
+            peer = savedRoomId ? new Peer(savedRoomId) : new Peer();
+
+            peer.on('open', (id) => {
+                myPeerId = id;
+                hostRoomId = id;
+                sessionStorage.setItem('k56_last_room', id);
+                localStorage.setItem('k56_last_room', id);
+                log(`Host online with Room ID: ${id}`, "success");
+
+                // Check if resuming previous saved state
+                if (savedRoomId) {
+                    const saved = GameState.loadFromStorage();
+                    if (saved && saved.seats && saved.seats.length === 6) {
+                        hostState = saved;
+                        if (hostState.phase === 'BIDDING') {
+                            hostBiddingState = BiddingEngine.restoreBiddingState(hostState);
+                        }
+                        log("Resumed previous table state from storage.", "success");
+                    }
+                }
+
+                // Initialize host seat
+                GameState.connectSeat(hostState, 0, myPlayerId, myPlayerName, id);
+                mySeatIndex = 0;
+
+                switchToGameView();
+                updateHostUI();
+                startHeartbeatCheck();
+            });
+
+            peer.on('connection', (conn) => {
+                handleIncomingClientConnection(conn);
+            });
+
+            peer.on('error', (err) => {
+                log(`Host Peer error: ${err.type} - ${err.message}`, "error");
+                if (err.type === 'unavailable-id') {
+                    log("Previous Room ID is still active on server. Starting fresh room...", "warn");
+                    startHost(null);
+                }
+            });
+        }
+
+        function handleIncomingClientConnection(conn) {
+            log(`Incoming connection from peer: ${conn.peer}`, "info");
+
+            conn.on('data', (data) => {
+                try {
+                    handleHostReceivedMessage(conn, data);
+                } catch (err) {
+                    log(`Error handling message from peer ${conn.peer}: ${err.message}`, "error");
+                    console.error(err);
+                }
+            });
+
+            conn.on('close', () => {
+                handleClientConnectionClose(conn);
+            });
+
+            conn.on('error', (err) => {
+                log(`Connection error with peer ${conn.peer}: ${err}`, "warn");
+                handleClientConnectionClose(conn);
+            });
+        }
+
+        function handleHostReceivedMessage(conn, data) {
+            if (data.type === 'HELLO') {
+                const { playerId, name, requestedSeat } = data;
+                log(`Handshake from ${name || 'Player'} (ID: ${playerId})`, "info");
+
+                // Check for RECONNECT by persistent playerId
+                // CRITICAL: A remote peer connection must NEVER take Seat 0 (Host seat).
+                let seatIndex = GameState.findSeatByPlayerId(hostState, playerId);
+
+                if (seatIndex > 0) {
+                    // Reconnected player restored to their seat
+                    log(`Player "${name || hostState.seats[seatIndex].name}" reconnected to Seat ${seatIndex + 1}!`, "success");
+                    clearDisconnectGraceTimer(seatIndex);
+
+                    GameState.connectSeat(hostState, seatIndex, playerId, name, conn.peer);
+                    connectionsBySeat[seatIndex] = conn;
+                    connectionsByPeerId[conn.peer] = conn;
+
+                    conn.send({
+                        type: 'REJOIN_SUCCESS',
+                        seatIndex: seatIndex,
+                        state: GameState.sanitizeStateForSeat(hostState, seatIndex)
+                    });
+
+                    broadcastToClients({
+                        type: 'PLAYER_RECONNECTED',
+                        seatIndex: seatIndex,
+                        name: hostState.seats[seatIndex].name
+                    });
+
+                    updateHostUI();
+                    hostBroadcastState();
+                    return;
+                }
+
+                // If new player in LOBBY phase
+                if (hostState.phase === 'LOBBY') {
+                    let targetSeat = -1;
+                    if (typeof requestedSeat === 'number' && requestedSeat > 0 && requestedSeat < 6 && hostState.seats[requestedSeat] && !hostState.seats[requestedSeat].connected && !hostState.seats[requestedSeat].playerId) {
+                        targetSeat = requestedSeat;
+                    } else {
+                        targetSeat = GameState.findVacantSeat(hostState);
+                    }
+
+                    if (targetSeat !== -1) {
+                        GameState.connectSeat(hostState, targetSeat, playerId, name, conn.peer);
+                        connectionsBySeat[targetSeat] = conn;
+                        connectionsByPeerId[conn.peer] = conn;
+
+                        conn.send({
+                            type: 'JOIN_SUCCESS',
+                            seatIndex: targetSeat,
+                            state: GameState.sanitizeStateForSeat(hostState, targetSeat)
+                        });
+
+                        log(`Assigned ${hostState.seats[targetSeat].name} to Seat ${targetSeat + 1}`, "success");
+                        updateHostUI();
+                        hostBroadcastState();
+                        return;
+                    }
+                }
+
+                // If game in progress, check if there is an abandoned or bot seat
+                const reclaimable = hostState.seats.findIndex(s => (!s.connected || s.isBot) && s.seatIndex !== 0);
+                if (reclaimable !== -1) {
+                    clearDisconnectGraceTimer(reclaimable);
+                    GameState.connectSeat(hostState, reclaimable, playerId, name, conn.peer);
+                    connectionsBySeat[reclaimable] = conn;
+                    connectionsByPeerId[conn.peer] = conn;
+
+                    conn.send({
+                        type: 'REJOIN_SUCCESS',
+                        seatIndex: reclaimable,
+                        state: GameState.sanitizeStateForSeat(hostState, reclaimable)
+                    });
+                    log(`Admitted ${hostState.seats[reclaimable].name} into Seat ${reclaimable + 1}`, "success");
+                    updateHostUI();
+                    hostBroadcastState();
+                    return;
+                }
+
+                conn.send({ type: 'TABLE_FULL', message: 'Room is currently full.' });
+            }
+
+            else if (data.type === 'PONG') {
+                conn._lastPong = Date.now();
+            }
+
+            else if (data.type === 'ACTION_BID') {
+                handlePlayerBid(data.seatIndex, data.bid, data.suit, data.convention || null);
+            }
+
+            else if (data.type === 'ACTION_DOUBLE') {
+                handlePlayerDouble(data.seatIndex);
+            }
+
+            else if (data.type === 'ACTION_REDOUBLE') {
+                handlePlayerRedouble(data.seatIndex);
+            }
+
+            else if (data.type === 'ACTION_PASS') {
+                handlePlayerPass(data.seatIndex);
+            }
+
+            else if (data.type === 'ACTION_PLAY_CARD') {
+                handlePlayerPlayCard(data.seatIndex, data.cardId);
+            }
+        }
+
+        function handleClientConnectionClose(conn) {
+            const peerId = conn.peer;
+            const seat = hostState.seats.find(s => s.peerId === peerId);
+            if (!seat) return;
+
+            log(`Player in Seat ${seat.seatIndex + 1} (${seat.name}) disconnected!`, "warn");
+            GameState.disconnectSeat(hostState, seat.seatIndex);
+
+            delete connectionsByPeerId[peerId];
+            delete connectionsBySeat[seat.seatIndex];
+
+            broadcastToClients({
+                type: 'PLAYER_DISCONNECTED',
+                seatIndex: seat.seatIndex,
+                name: seat.name
+            });
+
+            updateHostUI();
+            hostBroadcastState();
+            startDisconnectGraceTimer(seat.seatIndex);
+        }
+
+        function startDisconnectGraceTimer(seatIndex) {
+            clearDisconnectGraceTimer(seatIndex);
+            const seat = hostState.seats[seatIndex];
+            log(`Started 60s reconnect grace timer for ${seat.name}...`, "warn");
+
+            disconnectGraceTimers[seatIndex] = setTimeout(() => {
+                if (!seat.connected) {
+                    log(`Grace period expired for ${seat.name}. Substituting with AI Bot.`, "warn");
+                    GameState.setSeatBot(hostState, seatIndex, true);
+                    updateHostUI();
+                    hostBroadcastState();
+
+                    if (hostState.turnSeat === seatIndex) {
+                        triggerBotMove(seatIndex);
+                    }
+                }
+            }, 60000);
+        }
+
+        function clearDisconnectGraceTimer(seatIndex) {
+            if (disconnectGraceTimers[seatIndex]) {
+                clearTimeout(disconnectGraceTimers[seatIndex]);
+                delete disconnectGraceTimers[seatIndex];
+            }
+        }
+
+        function hostSubDisconnectedWithBot() {
+            const droppedSeat = hostState.seats.find(s => !s.connected && !s.isBot);
+            if (droppedSeat) {
+                log(`Host substituted Bot for Seat ${droppedSeat.seatIndex + 1} (${droppedSeat.name})`, "info");
+                GameState.setSeatBot(hostState, droppedSeat.seatIndex, true);
+                clearDisconnectGraceTimer(droppedSeat.seatIndex);
+                updateHostUI();
+                hostBroadcastState();
+
+                if (hostState.turnSeat === droppedSeat.seatIndex) {
+                    triggerBotMove(droppedSeat.seatIndex);
+                }
+            }
+        }
+
+        function hostFillBots() {
+            if (!isHost) return;
+            GameState.fillEmptySeatsWithBots(hostState);
+            log("Filled empty seats with AI Bots.", "success");
+            updateHostUI();
+            hostBroadcastState();
+        }
+
+        function startHeartbeatCheck() {
+            if (pingInterval) clearInterval(pingInterval);
+            pingInterval = setInterval(() => {
+                if (!isHost) return;
+                const now = Date.now();
+
+                Object.keys(connectionsBySeat).forEach((seatIdx) => {
+                    const conn = connectionsBySeat[seatIdx];
+                    if (conn && conn.open) {
+                        conn.send({ type: 'PING' });
+                        if (conn._lastPong && now - conn._lastPong > 10000) {
+                            log(`Ping timeout for Seat ${parseInt(seatIdx) + 1}`, "warn");
+                            handleClientConnectionClose(conn);
+                        }
+                    }
+                });
+            }, 3000);
+        }
+
+        function broadcastToClients(msg) {
+            Object.values(connectionsByPeerId).forEach(conn => {
+                if (conn.open) conn.send(msg);
+            });
+        }
+
+        function hostBroadcastState() {
+            if (!isHost) return;
+            GameState.saveToStorage(hostState);
+
+            // Update local host UI
+            renderGameState(hostState, 0);
+
+            // Send sanitized view to each client peer
+            hostState.seats.forEach(seat => {
+                if (seat.seatIndex !== 0 && seat.connected && !seat.isBot) {
+                    const conn = connectionsBySeat[seat.seatIndex] || (seat.peerId ? connectionsByPeerId[seat.peerId] : null);
+                    if (conn && (conn.open || conn.dataChannel?.readyState === 'open')) {
+                        try {
+                            conn.send({
+                                type: 'STATE_UPDATE',
+                                state: GameState.sanitizeStateForSeat(hostState, seat.seatIndex)
+                            });
+                        } catch (err) {
+                            console.warn(`Failed to send state update to Seat ${seat.seatIndex + 1}:`, err);
+                        }
+                    }
+                }
+            });
+        }
+
+        // ==========================================
+        // GAME ROUND ORCHESTRATION (HOST)
+        // ==========================================
+        function hostStartRound() {
+            if (!isHost) return;
+
+            const readySeats = hostState.seats.filter(s => s.connected || s.isBot);
+            if (readySeats.length < 6) {
+                alert(`Cannot start round: Only ${readySeats.length}/6 seats are ready.\nClick "Fill Empty Seats with Bots" to play immediately!`);
+                return;
+            }
+
+            document.getElementById('round-modal').style.display = 'none';
+            log("Dealing 48 cards for Kerala 56...", "info");
+            AudioFX.play('card');
+
+            // Generate & deal deck using GameEngine
+            const deck = GameEngine.shuffleDeck(GameEngine.generateDeck());
+            const dealtHands = [];
+            for (let i = 0; i < 6; i++) {
+                dealtHands.push(GameEngine.sortHand(deck.slice(i * 8, (i + 1) * 8)));
+            }
+
+            // Reset GameState for round
+            GameState.resetForNewRound(hostState, dealtHands);
+
+            // Initialize BiddingEngine
+            hostBiddingState = BiddingEngine.createBiddingState(hostState.dealerSeat);
+            hostState.bids = hostBiddingState.bids;
+            hostState.consecutivePasses = hostBiddingState.consecutivePasses;
+            hostState.turnSeat = hostBiddingState.turnSeat;
+
+            log(`Bidding started! First to bid: Seat ${hostState.turnSeat + 1} (${hostState.seats[hostState.turnSeat].name})`, "info");
+            updateHostUI();
+            hostBroadcastState();
+            checkTriggerBotTurn();
+        }
+
+        function handlePlayerBid(seatIndex, bidValue, suit, convention = null) {
+            if (!isHost || hostState.phase !== 'BIDDING' || hostState.turnSeat !== seatIndex) return;
+
+            try {
+                BiddingEngine.processBid(hostBiddingState, seatIndex, bidValue, suit, convention);
+                hostState.highBid = hostBiddingState.currentBid;
+                hostState.highBidder = hostBiddingState.highBidder;
+                hostState.trumpSuit = hostBiddingState.currentSuit;
+                hostState.convention = convention;
+                hostState.isDoubled = false;
+                hostState.doubledBy = null;
+                hostState.isRedoubled = false;
+                hostState.redoubledBy = null;
+                hostState.consecutivePasses = hostBiddingState.consecutivePasses;
+                hostState.turnSeat = hostBiddingState.turnSeat;
+                hostState.bids = hostBiddingState.bids;
+
+                const suitName = GameEngine.SUIT_NAMES[suit] || suit;
+                let convText = '';
+                if (convention === 'PLUS_28') {
+                    convText = ' [+28 convention: Jack & 2 other cards]';
+                } else if (convention === 'PLUS_1') {
+                    convText = ' [+1 convention: Single Jack]';
+                } else if (convention === 'PLUS_2') {
+                    convText = ' [+2 convention: Two top cards / support]';
+                }
+
+                log(`${hostState.seats[seatIndex].name} BID ${bidValue} ${suit} (${suitName})${convText}!`, "success");
+                AudioFX.play('card');
+
+                hostBroadcastState();
+                checkTriggerBotTurn();
+            } catch (err) {
+                log(err.message, "warn");
+            }
+        }
+
+        function handlePlayerDouble(seatIndex) {
+            if (!isHost || hostState.phase !== 'BIDDING' || hostState.turnSeat !== seatIndex) return;
+
+            try {
+                BiddingEngine.processDouble(hostBiddingState, seatIndex);
+                hostState.isDoubled = true;
+                hostState.doubledBy = seatIndex;
+                hostState.consecutivePasses = hostBiddingState.consecutivePasses;
+                hostState.turnSeat = hostBiddingState.turnSeat;
+                hostState.bids = hostBiddingState.bids;
+
+                log(`⚡ ${hostState.seats[seatIndex].name} DOUBLED the contract (${hostState.highBid} ${hostState.trumpSuit})!`, "warn");
+                AudioFX.play('win');
+
+                hostBroadcastState();
+                checkTriggerBotTurn();
+            } catch (err) {
+                log(err.message, "warn");
+            }
+        }
+
+        function handlePlayerRedouble(seatIndex) {
+            if (!isHost || hostState.phase !== 'BIDDING' || hostState.turnSeat !== seatIndex) return;
+
+            try {
+                BiddingEngine.processRedouble(hostBiddingState, seatIndex);
+                hostState.isRedoubled = true;
+                hostState.redoubledBy = seatIndex;
+                hostState.bids = hostBiddingState.bids;
+
+                log(`🔥 ${hostState.seats[seatIndex].name} REDOUBLED! Stakes are multiplied 4x! Auction concludes!`, "error");
+                AudioFX.play('win');
+
+                const contract = BiddingEngine.getWinningContract(hostBiddingState);
+                GameState.startTrickPlay(hostState, contract);
+                log(`Contract finalized: ${contract.bid} ${contract.suit} (REDOUBLED) by ${hostState.seats[contract.highBidder].name}.`, "success");
+                log(`Trick 1 begins. ${hostState.seats[hostState.turnSeat].name} leads.`, "info");
+
+                hostBroadcastState();
+                checkTriggerBotTurn();
+            } catch (err) {
+                log(err.message, "warn");
+            }
+        }
+
+        function handlePlayerPass(seatIndex) {
+            if (!isHost || hostState.phase !== 'BIDDING' || hostState.turnSeat !== seatIndex) return;
+
+            try {
+                BiddingEngine.processPass(hostBiddingState, seatIndex);
+                hostState.consecutivePasses = hostBiddingState.consecutivePasses;
+                hostState.turnSeat = hostBiddingState.turnSeat;
+                hostState.bids = hostBiddingState.bids;
+
+                log(`${hostState.seats[seatIndex].name} Passed.`, "info");
+
+                if (hostBiddingState.isComplete) {
+                    const contract = BiddingEngine.getWinningContract(hostBiddingState);
+                    GameState.startTrickPlay(hostState, contract);
+
+                    const dblTag = contract.isRedoubled ? ' (REDOUBLED 4x)' : (contract.isDoubled ? ' (DOUBLED 2x)' : '');
+                    log(`🏆 Contract won by ${hostState.seats[contract.highBidder].name} with ${contract.bid} ${contract.suit}${dblTag}!`, "success");
+                    log(`Trick 1 started. ${hostState.seats[hostState.turnSeat].name} leads.`, "info");
+
+                    hostBroadcastState();
+                    checkTriggerBotTurn();
+                    return;
+                }
+
+                hostBroadcastState();
+                checkTriggerBotTurn();
+            } catch (err) {
+                log(err.message, "warn");
+            }
+        }
+
+        function handlePlayerPlayCard(seatIndex, cardId) {
+            if (!isHost) return;
+            if (hostState.phase !== 'PLAYING') {
+                log(`Card play ignored from Seat ${seatIndex + 1}: Game phase is ${hostState.phase}, not PLAYING`, "warn");
+                return;
+            }
+            if (hostState.turnSeat !== seatIndex) {
+                log(`Rejected card play from Seat ${seatIndex + 1}: It is Seat ${hostState.turnSeat + 1}'s turn!`, "warn");
+                hostBroadcastState();
+                return;
+            }
+
+            const seat = hostState.seats[seatIndex];
+            if (!seat) return;
+            const cardIdx = seat.hand.findIndex(c => c.id === cardId);
+            if (cardIdx === -1) {
+                log(`Card ${cardId} not found in Seat ${seatIndex + 1}'s hand`, "warn");
+                return;
+            }
+
+            const card = seat.hand[cardIdx];
+
+            // Legal move validation via GameEngine
+            const legalIndices = GameEngine.getLegalCardIndices(seat.hand, hostState.currentTrick);
+            if (!legalIndices.includes(cardIdx)) {
+                log(`Illegal card play attempted by Seat ${seatIndex + 1}`, "warn");
+                hostBroadcastState();
+                return;
+            }
+
+            seat.hand.splice(cardIdx, 1);
+            hostState.currentTrick.push({
+                seat: seatIndex,
+                card: card,
+                playOrder: hostState.currentTrick.length
+            });
+
+            log(`${seat.name} (Seat ${seatIndex + 1}) played ${card.value}${card.suit}`, "info");
+            AudioFX.play('card');
+
+            if (hostState.currentTrick.length === 6) {
+                hostState.turnSeat = -1;
+                hostBroadcastState();
+                setTimeout(() => resolveCompletedTrick(), 1400);
+            } else {
+                hostState.turnSeat = (hostState.turnSeat + 1) % 6;
+                hostBroadcastState();
+                checkTriggerBotTurn();
+            }
+        }
+
+        function resolveCompletedTrick() {
+            // Evaluate trick winner via GameEngine
+            const res = GameEngine.evaluateTrickWinner(hostState.currentTrick, hostState.trumpSuit);
+            const winnerSeat = res.winnerSeat;
+            const winnerTeam = hostState.seats[winnerSeat].team;
+            const points = res.points;
+
+            hostState.teamTrickPoints[winnerTeam] += points;
+            log(`🏆 ${hostState.seats[winnerSeat].name} (Team ${winnerTeam === 0 ? 'Red' : 'Blue'}) won Trick ${hostState.trickNumber}! (+${points} pts)`, "success");
+            AudioFX.play('win');
+
+            hostState.currentTrick = [];
+            hostState.trickNumber++;
+
+            if (hostState.trickNumber > 8) {
+                finishRound();
+            } else {
+                hostState.turnSeat = winnerSeat;
+                hostBroadcastState();
+                checkTriggerBotTurn();
+            }
+        }
+
+        function finishRound() {
+            hostState.phase = 'ROUND_OVER';
+            const biddingTeam = hostState.seats[hostState.highBidder].team;
+            const defendingTeam = biddingTeam === 0 ? 1 : 0;
+            const bid = hostState.highBid;
+            const wonPts = hostState.teamTrickPoints[biddingTeam];
+            const isMade = wonPts >= bid;
+
+            const scoreInfo = GameEngine.calculateTableScore(bid, isMade, hostState.isDoubled, hostState.isRedoubled);
+            const tablesExchanged = scoreInfo.totalTables;
+
+            let roundSummary = '';
+            if (isMade) {
+                hostState.tables[biddingTeam] += tablesExchanged;
+                hostState.tables[defendingTeam] = Math.max(0, hostState.tables[defendingTeam] - tablesExchanged);
+                hostState.matchScore[biddingTeam] += 1;
+                roundSummary = `Contract Succeeded! Bidding Team ${biddingTeam === 0 ? 'Red' : 'Blue'} made ${wonPts}/${bid} points! (+${tablesExchanged} Tables)`;
+                log(roundSummary, "success");
+            } else {
+                hostState.tables[defendingTeam] += tablesExchanged;
+                hostState.tables[biddingTeam] = Math.max(0, hostState.tables[biddingTeam] - tablesExchanged);
+                hostState.matchScore[defendingTeam] += 1;
+                roundSummary = `Contract Defeated! Bidding Team captured ${wonPts}/${bid} points. Defending Team ${defendingTeam === 0 ? 'Red' : 'Blue'} wins +${tablesExchanged} Tables!`;
+                log(roundSummary, "error");
+            }
+
+            // Dealer rotation
+            hostState.dealerSeat = (hostState.dealerSeat + 1) % 6;
+            hostState.roundNumber++;
+
+            hostBroadcastState();
+
+            document.getElementById('round-winner-title').innerText = isMade ? "Bidders Victorious!" : "Defenders Victorious!";
+            const dblTag = hostState.isRedoubled ? ' (Redoubled 4x)' : (hostState.isDoubled ? ' (Doubled 2x)' : '');
+            document.getElementById('round-summary-text').innerHTML = `
+                ${roundSummary}<br><br>
+                <strong>Contract:</strong> ${bid} ${hostState.trumpSuit}${dblTag}<br>
+                <strong>Points Won:</strong> Team Red: ${hostState.teamTrickPoints[0]} | Team Blue: ${hostState.teamTrickPoints[1]}<br><br>
+                <strong>Table Standings:</strong><br>
+                Team Red: <strong>${hostState.tables[0]}</strong> Tables | Team Blue: <strong>${hostState.tables[1]}</strong> Tables
+            `;
+            document.getElementById('round-modal').style.display = 'flex';
+            document.getElementById('btn-next-round').style.display = isHost ? 'inline-block' : 'none';
+        }
+
+        // ==========================================
+        // BOT AUTOMATION (SUBSTITUTE FOR DROPPED PLAYERS)
+        // ==========================================
+        function checkTriggerBotTurn() {
+            if (!isHost) return;
+            const curSeat = hostState.seats[hostState.turnSeat];
+            if (curSeat && curSeat.isBot) {
+                setTimeout(() => triggerBotMove(curSeat.seatIndex), 800);
+            }
+        }
+
+        function triggerBotMove(seatIndex) {
+            if (!isHost || hostState.turnSeat !== seatIndex) return;
+
+            const action = BotEngine.computeBotAction(seatIndex, hostState, hostBiddingState);
+            if (!action) return;
+
+            if (action.type === 'PASS') {
+                handlePlayerPass(seatIndex);
+            } else if (action.type === 'BID') {
+                handlePlayerBid(seatIndex, action.bid, action.suit, action.convention || null);
+            } else if (action.type === 'DOUBLE') {
+                handlePlayerDouble(seatIndex);
+            } else if (action.type === 'REDOUBLE') {
+                handlePlayerRedouble(seatIndex);
+            } else if (action.type === 'PLAY_CARD') {
+                handlePlayerPlayCard(seatIndex, action.cardId);
+            }
+        }
+
+        // ==========================================
+        // CLIENT NETWORKING & AUTO-RECONNECT
+        // ==========================================
+        function startJoin() {
+            const hostId = document.getElementById('join-room-id').value.trim();
+            if (!hostId) {
+                alert("Please enter a valid Host Room ID");
+                return;
+            }
+
+            hostRoomId = hostId;
+            sessionStorage.setItem('k56_last_room', hostId);
+            sessionStorage.setItem('k56_last_role', 'client');
+            localStorage.setItem('k56_last_room', hostId);
+            log(`Connecting to Host Room: ${hostId}...`, "info");
+
+            peer = new Peer();
+
+            peer.on('open', (id) => {
+                myPeerId = id;
+                connectToHostPeer(hostRoomId);
+            });
+
+            peer.on('error', (err) => {
+                log(`Peer error: ${err.type} - ${err.message}`, "error");
+                showReconnectBanner(true, "PeerJS connection failed. Retrying...");
+            });
+        }
+
+        function connectToHostPeer(targetHostId) {
+            if (hostConnection) hostConnection.close();
+            hostConnection = peer.connect(targetHostId, { reliable: true });
+
+            hostConnection.on('open', () => {
+                log("Connected to Host! Sending handshake...", "success");
+                showReconnectBanner(false);
+                if (reconnectInterval) {
+                    clearInterval(reconnectInterval);
+                    reconnectInterval = null;
+                }
+
+                hostConnection.send({
+                    type: 'HELLO',
+                    playerId: myPlayerId,
+                    name: myPlayerName,
+                    requestedSeat: mySeatIndex
+                });
+            });
+
+            hostConnection.on('data', (data) => {
+                handleClientReceivedMessage(data);
+            });
+
+            hostConnection.on('close', () => {
+                log("Connection to Host was lost!", "warn");
+                handleHostDisconnection();
+            });
+
+            hostConnection.on('error', (err) => {
+                log(`Connection error with host: ${err}`, "warn");
+                handleHostDisconnection();
+            });
+        }
+
+        function handleHostDisconnection() {
+            showReconnectBanner(true, "⚠️ Host disconnected. Auto-reconnecting in 3s...");
+            if (!reconnectInterval) {
+                reconnectInterval = setInterval(() => {
+                    log("Attempting reconnect to Host...", "info");
+                    if (peer && !peer.destroyed) {
+                        connectToHostPeer(hostRoomId);
+                    } else {
+                        peer = new Peer();
+                        peer.on('open', () => connectToHostPeer(hostRoomId));
+                    }
+                }, 3500);
+            }
+        }
+
+        function manualReconnect() {
+            if (hostRoomId) {
+                log("Manual reconnect triggered...", "info");
+                connectToHostPeer(hostRoomId);
+            }
+        }
+
+        function showReconnectBanner(visible, text = '') {
+            const banner = document.getElementById('reconnect-banner');
+            const txt = document.getElementById('reconnect-banner-text');
+            if (visible) {
+                banner.className = 'visible';
+                if (text) txt.innerText = text;
+            } else {
+                banner.className = '';
+            }
+        }
+
+        function handleClientReceivedMessage(data) {
+            if (data.type === 'PING') {
+                if (hostConnection && (hostConnection.open || hostConnection.dataChannel?.readyState === 'open')) {
+                    hostConnection.send({ type: 'PONG' });
+                }
+            } else if (data.type === 'JOIN_SUCCESS' || data.type === 'REJOIN_SUCCESS') {
+                mySeatIndex = data.seatIndex;
+                clientGameState = data.state;
+                log(`Assigned to Seat ${mySeatIndex + 1} (${mySeatIndex % 2 === 0 ? 'Team Red' : 'Team Blue'})`, "success");
+                switchToGameView();
+                renderGameState(data.state, mySeatIndex);
+            } else if (data.type === 'STATE_UPDATE') {
+                clientGameState = data.state;
+                if (mySeatIndex === null && data.state && data.state.seats) {
+                    const foundSeat = data.state.seats.findIndex(s => s.playerId === myPlayerId);
+                    if (foundSeat !== -1) mySeatIndex = foundSeat;
+                }
+                if (mySeatIndex !== null && document.getElementById('game-view').style.display !== 'flex') {
+                    switchToGameView();
+                }
+                renderGameState(data.state, mySeatIndex);
+            } else if (data.type === 'PLAYER_DISCONNECTED') {
+                log(`Seat ${data.seatIndex + 1} (${data.name}) disconnected.`, "warn");
+            } else if (data.type === 'PLAYER_RECONNECTED') {
+                log(`Seat ${data.seatIndex + 1} (${data.name}) reconnected!`, "success");
+            } else if (data.type === 'TABLE_FULL') {
+                alert(data.message);
+            }
+        }
+
+        // ==========================================
+        // CLIENT USER ACTIONS
+        // ==========================================
+        let selectedBidSuit = '♠';
+
+        function selectBidSuit(suit) {
+            selectedBidSuit = suit;
+            document.querySelectorAll('.suit-pick-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.getAttribute('data-suit') === suit);
+            });
+            document.querySelectorAll('.conv-suit-lbl').forEach(lbl => {
+                lbl.innerText = suit;
+                if (suit === '♥' || suit === '♦') {
+                    lbl.style.color = '#ff6b6b';
+                } else if (suit === 'NT') {
+                    lbl.style.color = 'var(--gold)';
+                } else {
+                    lbl.style.color = '#fff';
+                }
+            });
+        }
+
+        function adjustBidInput(delta) {
+            const inp = document.getElementById('bid-input');
+            let val = parseInt(inp.value) + delta;
+            if (val < parseInt(inp.min)) val = parseInt(inp.min);
+            if (val > 56) val = 56;
+            inp.value = val;
+        }
+
+        function submitBid() {
+            const bidVal = parseInt(document.getElementById('bid-input').value);
+            dispatchBid(bidVal, selectedBidSuit, 'STANDARD');
+        }
+
+        function submitPlus28() {
+            dispatchBid(28, selectedBidSuit, 'PLUS_28');
+        }
+
+        function submitPlusOne() {
+            const curState = isHost ? hostState : clientGameState;
+            const nextVal = (curState && curState.highBidder !== null) ? curState.highBid + 1 : 28;
+            dispatchBid(nextVal, selectedBidSuit, 'PLUS_1');
+        }
+
+        function submitPlusTwo() {
+            const curState = isHost ? hostState : clientGameState;
+            const nextVal = (curState && curState.highBidder !== null) ? curState.highBid + 2 : 29;
+            dispatchBid(nextVal, selectedBidSuit, 'PLUS_2');
+        }
+
+        function dispatchBid(bidVal, suit, convention) {
+            if (isHost) {
+                handlePlayerBid(mySeatIndex, bidVal, suit, convention);
+            } else if (hostConnection && (hostConnection.open || hostConnection.dataChannel?.readyState === 'open')) {
+                hostConnection.send({ type: 'ACTION_BID', seatIndex: mySeatIndex, bid: bidVal, suit: suit, convention: convention });
+            } else {
+                log("Cannot bid: Not connected to host room.", "error");
+            }
+        }
+
+        function submitDouble() {
+            if (isHost) {
+                handlePlayerDouble(mySeatIndex);
+            } else if (hostConnection && (hostConnection.open || hostConnection.dataChannel?.readyState === 'open')) {
+                hostConnection.send({ type: 'ACTION_DOUBLE', seatIndex: mySeatIndex });
+            } else {
+                log("Cannot double: Not connected to host room.", "error");
+            }
+        }
+
+        function submitRedouble() {
+            if (isHost) {
+                handlePlayerRedouble(mySeatIndex);
+            } else if (hostConnection && (hostConnection.open || hostConnection.dataChannel?.readyState === 'open')) {
+                hostConnection.send({ type: 'ACTION_REDOUBLE', seatIndex: mySeatIndex });
+            } else {
+                log("Cannot redouble: Not connected to host room.", "error");
+            }
+        }
+
+        function submitPass() {
+            if (isHost) {
+                handlePlayerPass(mySeatIndex);
+            } else if (hostConnection && (hostConnection.open || hostConnection.dataChannel?.readyState === 'open')) {
+                hostConnection.send({ type: 'ACTION_PASS', seatIndex: mySeatIndex });
+            } else {
+                log("Cannot pass: Not connected to host room.", "error");
+            }
+        }
+
+        function clientPlayCard(cardId) {
+            if (isHost) {
+                handlePlayerPlayCard(mySeatIndex, cardId);
+            } else if (hostConnection && (hostConnection.open || hostConnection.dataChannel?.readyState === 'open')) {
+                hostConnection.send({ type: 'ACTION_PLAY_CARD', seatIndex: mySeatIndex, cardId: cardId });
+                log(`Played card ${cardId}. Broadcasting to table...`, "info");
+            } else {
+                log("Cannot play card: Connection to host room is not active.", "error");
+            }
+        }
+
+        // ==========================================
+        // UI RENDERING & PERSPECTIVE ROTATION
+        // ==========================================
+        function switchToGameView() {
+            document.getElementById('lobby-view').style.display = 'none';
+            document.getElementById('game-view').style.display = 'flex';
+            document.getElementById('room-code-tag').style.display = 'flex';
+            document.getElementById('display-room-id').innerText = isHost ? myPeerId : hostRoomId;
+
+            const badge = document.getElementById('my-seat-badge');
+            if (badge && mySeatIndex !== null && mySeatIndex !== undefined) {
+                badge.style.display = 'inline-block';
+                badge.innerText = `You: Seat ${mySeatIndex + 1}`;
+                badge.className = `seat-team-badge ${mySeatIndex % 2 === 0 ? 't1' : 't2'}`;
+            }
+
+            if (isHost) {
+                document.getElementById('host-toolbar').style.display = 'flex';
+            }
+        }
+
+        function updateHostUI() {
+            if (!isHost) return;
+            const readySeats = hostState.seats.filter(s => s.connected || s.isBot).length;
+            document.getElementById('host-player-count').innerText = `Players: ${readySeats}/6`;
+
+            const hasDropped = hostState.seats.some(s => !s.connected && !s.isBot);
+            document.getElementById('btn-sub-bot').style.display = hasDropped ? 'inline-block' : 'none';
+        }
+
+        function renderGameState(state, localSeatIndex) {
+            if (!state) return;
+
+            document.getElementById('score-t1').innerText = state.tables ? state.tables[0] : 12;
+            document.getElementById('score-t2').innerText = state.tables ? state.tables[1] : 12;
+
+            const announcer = document.getElementById('game-announcer');
+            const turnSeatObj = state.turnSeat >= 0 ? state.seats[state.turnSeat] : null;
+            const isMyTurn = state.turnSeat >= 0 && state.turnSeat === localSeatIndex;
+            const turnName = turnSeatObj ? turnSeatObj.name : '';
+
+            if (state.phase === 'LOBBY') {
+                announcer.innerText = "Waiting for players to join...";
+            } else if (state.phase === 'BIDDING') {
+                const dblInfo = state.isRedoubled ? ' (REDOUBLED 4x)' : (state.isDoubled ? ' (DOUBLED 2x)' : '');
+                if (isMyTurn) {
+                    if (state.highBidder === null) {
+                        announcer.innerText = "Your turn to open the bidding (Min 28)!";
+                    } else {
+                        announcer.innerText = `Your turn! Bid, Double, or Pass (Current: ${state.highBid} ${state.trumpSuit || ''}${dblInfo})`;
+                    }
+                } else {
+                    if (state.highBidder === null) {
+                        announcer.innerText = `${turnName}'s turn to open the bidding...`;
+                    } else {
+                        announcer.innerText = `${turnName}'s turn to bid... (Current: ${state.highBid} ${state.trumpSuit || ''}${dblInfo})`;
+                    }
+                }
+                if (isMyTurn) AudioFX.play('turn');
+            } else if (state.phase === 'PLAYING') {
+                if (state.turnSeat === -1) {
+                    announcer.innerText = `Trick ${state.trickNumber}/8 complete! Resolving winner...`;
+                } else {
+                    announcer.innerText = isMyTurn ? "Your turn to play a card!" : `Trick ${state.trickNumber}/8: ${turnName}'s turn to play...`;
+                }
+                if (isMyTurn) AudioFX.play('turn');
+            } else if (state.phase === 'ROUND_OVER') {
+                announcer.innerText = "Round completed!";
+            }
+
+            const trumpText = document.getElementById('trump-text');
+            const trumpIcon = document.getElementById('trump-icon');
+            if (!state.trumpSuit) {
+                trumpText.innerText = state.phase === 'BIDDING' ? "Auction in Progress" : "Not Set";
+                trumpIcon.innerText = "";
+            } else {
+                const dbl = state.isRedoubled ? ' [REDOUBLED 4x]' : (state.isDoubled ? ' [DOUBLED 2x]' : '');
+                if (state.trumpSuit === 'NT') {
+                    trumpText.innerText = `No Trump (NT)${dbl}`;
+                    trumpIcon.innerText = "🌐";
+                    trumpIcon.style.color = 'var(--gold)';
+                } else {
+                    const isRed = GameEngine.SUITS[state.trumpSuit] === 'red';
+                    trumpText.innerText = `${GameEngine.SUIT_NAMES[state.trumpSuit]}${dbl}`;
+                    trumpIcon.innerText = state.trumpSuit;
+                    trumpIcon.style.color = isRed ? 'var(--card-red)' : '#fff';
+                }
+            }
+
+            // Always sync the header my-seat-badge with actual seat index
+            const myBadge = document.getElementById('my-seat-badge');
+            if (myBadge && localSeatIndex !== null && localSeatIndex !== undefined) {
+                myBadge.style.display = 'inline-block';
+                myBadge.innerText = `You: Seat ${localSeatIndex + 1}`;
+                myBadge.className = `seat-team-badge ${localSeatIndex % 2 === 0 ? 't1' : 't2'}`;
+            }
+
+            // 6 Seats Perspective Rotation (Local player is always seat-pos-0)
+            for (let i = 0; i < 6; i++) {
+                const visualPos = (i - localSeatIndex + 6) % 6;
+                const seatData = state.seats[i];
+
+                const seatEl = document.getElementById(`seat-ui-${visualPos}`);
+                const nameEl = document.getElementById(`seat-name-${visualPos}`);
+                const dotEl = document.getElementById(`seat-dot-${visualPos}`);
+                const statusEl = document.getElementById(`seat-status-text-${visualPos}`);
+                const bidEl = document.getElementById(`seat-bid-${visualPos}`);
+
+                if (seatEl && seatData) {
+                    nameEl.innerText = `${seatData.name} ${i === localSeatIndex ? '(You)' : ''}`;
+
+                    const teamBadge = seatEl.querySelector('.seat-team-badge');
+                    if (teamBadge) {
+                        const isRed = seatData.team === 0;
+                        teamBadge.className = `seat-team-badge ${isRed ? 't1' : 't2'}`;
+                        teamBadge.innerText = `Seat ${seatData.seatIndex + 1} • ${isRed ? 'Team Red' : 'Team Blue'}`;
+                    }
+                    seatEl.classList.toggle('team-0', seatData.team === 0);
+                    seatEl.classList.toggle('team-1', seatData.team === 1);
+
+                    if (state.turnSeat === i) {
+                        seatEl.classList.add('turn-active');
+                    } else {
+                        seatEl.classList.remove('turn-active');
+                    }
+
+                    if (seatData.connected && !seatData.isBot) {
+                        dotEl.className = 'status-dot online';
+                        statusEl.innerText = 'Online';
+                        seatEl.classList.remove('disconnected');
+                    } else if (seatData.isBot) {
+                        dotEl.className = 'status-dot bot';
+                        statusEl.innerText = 'AI Bot';
+                        seatEl.classList.remove('disconnected');
+                    } else {
+                        dotEl.className = 'status-dot offline';
+                        statusEl.innerText = 'Disconnected';
+                        seatEl.classList.add('disconnected');
+                    }
+
+                    const lastBid = [...state.bids].reverse().find(b => b.seat === i);
+                    if (state.phase === 'BIDDING' && lastBid) {
+                        bidEl.style.display = 'inline-block';
+                        if (lastBid.type === 'BID') {
+                            if (lastBid.convention === 'PLUS_28') {
+                                bidEl.innerText = `+28 ${lastBid.suit}`;
+                            } else if (lastBid.convention === 'PLUS_1') {
+                                bidEl.innerText = `+1 ${lastBid.suit} (${lastBid.bid})`;
+                            } else if (lastBid.convention === 'PLUS_2') {
+                                bidEl.innerText = `+2 ${lastBid.suit} (${lastBid.bid})`;
+                            } else {
+                                bidEl.innerText = `${lastBid.bid} ${lastBid.suit}`;
+                            }
+                        } else if (lastBid.type === 'DOUBLE') {
+                            bidEl.innerText = 'DOUBLE!';
+                        } else if (lastBid.type === 'REDOUBLE') {
+                            bidEl.innerText = 'REDOUBLE!';
+                        } else {
+                            bidEl.innerText = 'Pass';
+                        }
+                    } else if (state.highBidder === i && state.phase !== 'LOBBY') {
+                        const dbl = state.isRedoubled ? ' 4x' : (state.isDoubled ? ' 2x' : '');
+                        const convPrefix = state.convention === 'PLUS_28' ? '+28 ' : (state.convention === 'PLUS_1' ? '+1 ' : '');
+                        bidEl.style.display = 'inline-block';
+                        bidEl.innerText = `${convPrefix}${state.highBid} ${state.trumpSuit}${dbl}`;
+                    } else {
+                        bidEl.style.display = 'none';
+                    }
+                }
+            }
+
+            // Trick Area - Cards positioned outward closer to each player's seat
+            const trickArea = document.getElementById('trick-area');
+            trickArea.innerHTML = '';
+
+            const trickOffsets = [
+                { x: 0, y: 115 },      // 0: Bottom (You)
+                { x: -180, y: 55 },    // 1: Bottom Left
+                { x: -180, y: -55 },   // 2: Top Left
+                { x: 0, y: -110 },     // 3: Top (Partner)
+                { x: 180, y: -55 },    // 4: Top Right
+                { x: 180, y: 55 }      // 5: Bottom Right
+            ];
+
+            state.currentTrick.forEach((item) => {
+                const card = item.card;
+                const visualPos = (item.seat - localSeatIndex + 6) % 6;
+                const offset = trickOffsets[visualPos] || { x: 0, y: 0 };
+
+                const wrapper = document.createElement('div');
+                wrapper.className = 'table-card-wrapper';
+                wrapper.style.transform = `translate(${offset.x}px, ${offset.y}px)`;
+
+                const cardEl = createCardElement(card, false);
+                const tag = document.createElement('div');
+                tag.className = 'table-card-tag';
+                const seatData = state.seats[item.seat];
+                const teamClass = seatData.team === 0 ? 't1' : 't2';
+                tag.innerHTML = `<span>${seatData.name}</span> <span class="seat-team-badge ${teamClass}" style="font-size: 9px; padding: 1px 4px;">S${item.seat + 1}</span>`;
+
+                wrapper.appendChild(tag);
+                wrapper.appendChild(cardEl);
+                trickArea.appendChild(wrapper);
+            });
+
+            // Action Bar
+            const biddingControls = document.getElementById('bidding-controls');
+            const bidInput = document.getElementById('bid-input');
+            const turnIndicator = document.getElementById('my-turn-indicator');
+
+            if (state.phase === 'BIDDING' && isMyTurn) {
+                biddingControls.style.display = 'flex';
+                const nextMin = Math.max(28, state.highBid + 1);
+                bidInput.min = nextMin;
+                if (parseInt(bidInput.value) < nextMin) {
+                    bidInput.value = nextMin;
+                }
+
+                // Convention buttons visibility
+                const btnPlus28 = document.getElementById('btn-plus-28');
+                if (btnPlus28) {
+                    btnPlus28.style.display = (state.highBidder === null || state.highBid < 28) ? 'inline-flex' : 'none';
+                }
+
+                const btnPlus1 = document.getElementById('btn-plus-1');
+                if (btnPlus1) {
+                    const nextPlus1Val = state.highBidder === null ? 28 : state.highBid + 1;
+                    btnPlus1.style.display = nextPlus1Val <= 56 ? 'inline-flex' : 'none';
+                    btnPlus1.title = `+1 (Single Jack): Bids ${nextPlus1Val} ${selectedBidSuit}`;
+                }
+
+                const btnPlus2 = document.getElementById('btn-plus-2');
+                if (btnPlus2) {
+                    const nextPlus2Val = state.highBidder === null ? 29 : state.highBid + 2;
+                    btnPlus2.style.display = nextPlus2Val <= 56 ? 'inline-flex' : 'none';
+                    btnPlus2.title = `+2 (Support): Bids ${nextPlus2Val} ${selectedBidSuit}`;
+                }
+
+                // Double eligibility
+                const isOpponent = state.highBidder !== null && (state.highBidder % 2 !== localSeatIndex % 2);
+                const canDouble = isOpponent && !state.isDoubled;
+                const btnDouble = document.getElementById('btn-double');
+                if (btnDouble) btnDouble.style.display = canDouble ? 'inline-block' : 'none';
+
+                // Redouble eligibility
+                const isMyTeam = state.highBidder !== null && (state.highBidder % 2 === localSeatIndex % 2);
+                const canRedouble = isMyTeam && state.isDoubled && !state.isRedoubled;
+                const btnRedouble = document.getElementById('btn-redouble');
+                if (btnRedouble) btnRedouble.style.display = canRedouble ? 'inline-block' : 'none';
+
+                // In ITR, opening player cannot pass
+                const btnPass = document.getElementById('btn-pass');
+                if (btnPass) btnPass.style.display = state.highBidder !== null ? 'inline-block' : 'none';
+            } else {
+                biddingControls.style.display = 'none';
+            }
+
+            turnIndicator.style.display = (state.phase === 'PLAYING' && isMyTurn) ? 'inline-block' : 'none';
+
+            const localSeat = state.seats[localSeatIndex];
+            myHand = localSeat ? localSeat.hand : [];
+
+            renderLocalHand(myHand, state, isMyTurn);
+        }
+
+        function createCardElement(card, isPlayable, onClick = null) {
+            const el = document.createElement('div');
+            el.className = `card ${card.color} ${isPlayable ? 'playable' : ''}`;
+
+            if (card.hidden) {
+                el.style.background = '#2b3945';
+                el.innerHTML = '<div style="color: #64748b; font-size: 24px; align-self: center; margin: auto;">🂠</div>';
+                return el;
+            }
+
+            el.innerHTML = `
+                <div class="card-corner">
+                    <span>${card.value}</span>
+                    <span style="font-size: 11px;">${card.suit}</span>
+                </div>
+                <div class="card-center-suit">${card.suit}</div>
+                <div class="card-corner card-corner-bottom">
+                    <span>${card.value}</span>
+                    <span style="font-size: 11px;">${card.suit}</span>
+                </div>
+            `;
+
+            if (onClick) el.addEventListener('click', onClick);
+            return el;
+        }
+
+        function renderLocalHand(hand, state, isMyTurn) {
+            const handContainer = document.getElementById('my-hand');
+            handContainer.innerHTML = '';
+
+            if (!hand || hand.length === 0) {
+                handContainer.innerHTML = '<div style="color: #718096; font-size: 14px;">Cards will appear here when the round begins.</div>';
+                return;
+            }
+
+            // Legal moves calculated via GameEngine (International 56 rules: follow suit if held, else any card)
+            const legalIndices = (state.phase === 'PLAYING' && isMyTurn)
+                ? GameEngine.getLegalCardIndices(hand, state.currentTrick)
+                : [];
+
+            hand.forEach((card, index) => {
+                const isPlayable = isMyTurn && state.phase === 'PLAYING' && legalIndices.includes(index);
+                const cardEl = createCardElement(card, isPlayable, () => {
+                    if (isPlayable) {
+                        clientPlayCard(card.id);
+                    } else {
+                        if (state.phase === 'LOBBY') {
+                            log("The game has not started yet. Waiting for host to deal.", "warn");
+                        } else if (state.phase === 'BIDDING') {
+                            log("Auction in progress! Place a bid or pass - cards can only be played during trick play.", "warn");
+                        } else if (state.phase === 'ROUND_OVER') {
+                            log("Round has completed. Waiting for next deal.", "info");
+                        } else if (!isMyTurn) {
+                            const turnPlayer = state.turnSeat >= 0 && state.seats[state.turnSeat] ? state.seats[state.turnSeat].name : 'another player';
+                            log(`It is currently ${turnPlayer}'s turn to play.`, "warn");
+                        } else if (!legalIndices.includes(index)) {
+                            log("Under Kerala 56 rules, you must follow the lead suit if you hold any cards of that suit!", "warn");
+                        }
+                    }
+                });
+
+                if (state.phase === 'PLAYING' && isMyTurn && !isPlayable) {
+                    cardEl.classList.add('disabled-card');
+                }
+
+                handContainer.appendChild(cardEl);
+            });
+        }
+    </script>
+</body>
+</html>
